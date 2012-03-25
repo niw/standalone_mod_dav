@@ -1,0 +1,97 @@
+#!/bin/sh
+LOGDIR=log
+PID_FILE=$LOGDIR/httpd.pid
+CONF_FILE=httpd.conf
+SERVER_ROOT=.
+
+cd `dirname $0`
+
+if [ -z "$1" ]; then
+	echo "Usage $0 [start|foreground|stop|restart]"
+	exit
+fi
+
+LOOKUP_DIRS="/usr/bin /usr/sbin /usr/local/bin /usr/local/sbin"
+APACHE_NAME="httpd apache2"
+HTDIGEST=.htdigest
+MODULES=modules
+DOCUMENT_ROOT=document_root
+for dir in $LOOKUP_DIRS; do
+	for file in $APACHE_NAME; do
+		if [ -f "$dir/$file" ]; then
+			HTTPD=$dir/$file
+		fi
+	done
+done
+if [ -z "$HTTPD" ]; then
+	echo "Sorry, we could not find the apache binary in $LOOKUP_DIRS."
+	exit
+fi
+if [ ! -f "$HTDIGEST" ]; then
+	echo "Please make $HTDIGEST before running httpd."
+	exit
+fi
+if [ ! -d "$MODULES" ]; then
+	echo "Please symlink $MODULES from where apache modules exist before running httpd."
+	exit
+fi
+if [ ! -d "$LOGDIR" ]; then
+	mkdir "$LOGDIR"
+fi
+if [ ! -d "$DOCUMENT_ROOT" ]; then
+	mkdir "$DOCUMENT_ROOT"
+fi
+
+run() {
+	if [ -f "$PID_FILE" ]; then
+		echo "$PID_FILE already exists, please check the existing processes."
+	else
+		echo "Booting $HTTPD..."
+		"$HTTPD" -d "$SERVER_ROOT" -f "$CONF_FILE" $OPTIONS
+		if [ "$1" = "wait" ]; then
+			i=0
+			while [ ! -f "$PID_FILE" ]; do
+				if [ $i = "60" ]; then
+					break;
+				else
+					i=$(($i+1))
+					sleep 1
+				fi
+			done
+			pid=`cat "$PID_FILE"`
+			echo "$HTTPD is running (pid=$pid)"
+		fi
+	fi
+}
+if [ "$1" = "start" ]; then
+	run wait
+	exit
+fi
+if [ "$1" = "foreground" ]; then
+	OPTIONS=-DFOREGROUND
+	run
+	exit
+fi
+if [ -f "$PID_FILE" ]; then
+	if [ "$1" = "stop" -o "$1" = "restart" ]; then
+		pid=`cat "$PID_FILE"`
+		echo "Killing $pid..."
+		kill -TERM $pid
+		i=0
+		while $(kill -0 $pid 2> /dev/null); do
+			if [ $i = "60" ]; then
+				break;
+			else
+				i=$(($i+1))
+				sleep 1
+			fi
+		done
+		echo "$HTTPD was stoped"
+	fi
+	if [ "$1" = "restart" ]; then
+		run
+	fi
+	exit
+else
+	echo "$PID_FILE doesn't exist, $HTTPD may not be running now."
+fi
