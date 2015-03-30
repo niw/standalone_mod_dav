@@ -1,5 +1,5 @@
 #!/bin/sh
-LOGDIR=log
+LOGDIR=logs
 PID_FILE=$LOGDIR/httpd.pid
 CONF_FILE=httpd.conf
 SERVER_ROOT=.

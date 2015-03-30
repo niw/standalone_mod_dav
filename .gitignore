@@ -2,3 +2,4 @@
 .htdigest
 document_root
 modules
+logs
