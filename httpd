@@ -1,97 +1,133 @@
-#!/bin/sh
-LOGDIR=logs
-PID_FILE=$LOGDIR/httpd.pid
-CONF_FILE=httpd.conf
-SERVER_ROOT=.
+#!/usr/bin/env bash
 
-cd `dirname $0`
+set -euo pipefail
 
-if [ -z "$1" ]; then
-	echo "Usage $0 [start|foreground|stop|restart]"
-	exit
-fi
+readonly CONF_FILE=httpd.conf
 
-LOOKUP_DIRS="/usr/bin /usr/sbin /usr/local/bin /usr/local/sbin"
-APACHE_NAME="httpd apache2"
-HTDIGEST=.htdigest
-MODULES=modules
-DOCUMENT_ROOT=document_root
-for dir in $LOOKUP_DIRS; do
-	for file in $APACHE_NAME; do
-		if [ -f "$dir/$file" ]; then
-			HTTPD=$dir/$file
-		fi
-	done
-done
-if [ -z "$HTTPD" ]; then
-	echo "Sorry, we could not find the apache binary in $LOOKUP_DIRS."
-	exit
-fi
-if [ ! -f "$HTDIGEST" ]; then
-	echo "Please make $HTDIGEST before running httpd."
-	exit
-fi
-if [ ! -d "$MODULES" ]; then
-	echo "Please symlink $MODULES from where apache modules exist before running httpd."
-	exit
-fi
-if [ ! -d "$LOGDIR" ]; then
-	mkdir "$LOGDIR"
-fi
-if [ ! -d "$DOCUMENT_ROOT" ]; then
-	mkdir "$DOCUMENT_ROOT"
-fi
+# Following variables are in sync with configuration file.
+readonly SERVER_ROOT=.
+readonly MODULES=modules
+readonly LOGDIR=logs
+readonly PID_FILE=$LOGDIR/httpd.pid
+readonly HTDIGEST=.htdigest
+readonly DOCUMENT_ROOT=document_root
 
-run() {
-	if [ -f "$PID_FILE" ]; then
-		echo "$PID_FILE already exists, please check the existing processes."
-	else
-		echo "Booting $HTTPD..."
-		"$HTTPD" -d "$SERVER_ROOT" -f "$CONF_FILE" $OPTIONS
-		if [ "$1" = "wait" ]; then
-			i=0
-			while [ ! -f "$PID_FILE" ]; do
-				if [ $i = "60" ]; then
-					break;
-				else
-					i=$(($i+1))
-					sleep 1
-				fi
-			done
-			pid=`cat "$PID_FILE"`
-			echo "$HTTPD is running (pid=$pid)"
-		fi
-	fi
+readonly HTTPD=${HTTPD:-/usr/sbin/httpd}
+
+WORK_DIR=$(cd "$(dirname "$0")" >/dev/null; pwd)
+readonly WORK_DIR
+
+help() {
+  echo "Usage: $0 start|foreground|stop|restart"
+  exit 0
 }
-if [ "$1" = "start" ]; then
-	run wait
-	exit
+
+start() {
+  local pid
+
+  if [[ -f "$PID_FILE" ]]; then
+    pid=$(cat "$PID_FILE")
+
+    if $(kill -0 $pid 2>/dev/null); then
+      echo "$PID_FILE already exists, please check the process pid=$pid" >&2
+      exit 1
+    else
+      echo "pid=$pid not found, remove $PID_FILE..."
+      rm "$PID_FILE"
+    fi
+  fi
+
+  echo "Starting $HTTPD..."
+  "$HTTPD" -d "$SERVER_ROOT" -f "$CONF_FILE" "$@"
+
+  echo -n "Waiting.."
+  local wating_count=0
+  while [[ ! -f "$PID_FILE" ]]; do
+    echo -n "."
+    if (( wating_count < 60 )); then
+      wating_count=$(( wating_count + 1 ))
+      sleep 1
+    else
+      echo
+      echo "$PID_FILE not found." >&2
+      exit 1
+    fi
+  done
+  echo
+
+  pid=$(cat "$PID_FILE")
+
+  echo "$HTTPD started pid=$pid"
+}
+
+stop() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    pid=$(cat "$PID_FILE")
+    readonly pid
+
+    echo "Stopping pid=$pid..."
+    kill -TERM $pid
+
+    echo -n "Waiting.."
+    local wating_count=0
+    while $(kill -0 $pid 2>/dev/null); do
+      echo -n "."
+      if (( wating_count < 60 )); then
+        wating_count=$(( wating_count + 1 ))
+        sleep 1
+      else
+        echo
+        echo "$pid is still running." >&2
+        exit 1
+      fi
+    done
+    echo
+
+    echo "pid=$pid stoped."
+  else
+    echo "$PID_FILE doesn't exist, $HTTPD may not be running now." >&2
+    exit 1
+  fi
+}
+
+if (( $# < 1 )); then
+  help
 fi
-if [ "$1" = "foreground" ]; then
-	OPTIONS=-DFOREGROUND
-	run
-	exit
+
+cd "$WORK_DIR"
+
+if [[ ! -f $HTDIGEST ]]; then
+  echo "Please make $HTDIGEST before running httpd." >&2
+  exit 1
 fi
-if [ -f "$PID_FILE" ]; then
-	if [ "$1" = "stop" -o "$1" = "restart" ]; then
-		pid=`cat "$PID_FILE"`
-		echo "Killing $pid..."
-		kill -TERM $pid
-		i=0
-		while $(kill -0 $pid 2> /dev/null); do
-			if [ $i = "60" ]; then
-				break;
-			else
-				i=$(($i+1))
-				sleep 1
-			fi
-		done
-		echo "$HTTPD was stoped"
-	fi
-	if [ "$1" = "restart" ]; then
-		run
-	fi
-	exit
-else
-	echo "$PID_FILE doesn't exist, $HTTPD may not be running now."
+if [[ ! -d $MODULES ]]; then
+  echo "Please symlink $MODULES from where apache modules exist before running httpd." >&2
+  exit 1
 fi
+if [[ ! -d $LOGDIR ]]; then
+  mkdir "$LOGDIR"
+fi
+if [[ ! -e $DOCUMENT_ROOT ]]; then
+  mkdir "$DOCUMENT_ROOT"
+fi
+
+case $1 in
+  start)
+    start
+    ;;
+  foreground)
+    start -DFOREGROUND
+    ;;
+  stop)
+    stop
+    ;;
+  restart)
+    stop
+    start
+    ;;
+  *)
+    echo "Unknown command $1" >&2
+    exit 1
+    ;;
+esac
